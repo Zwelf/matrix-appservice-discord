@@ -75,6 +75,32 @@ export class MatrixRoomHandler {
         });
     }
 
+    public async JoinDiscordUsers(roomId: string): Promise<void> {
+        let channel: Discord.TextChannel = await this.discord.GetChannelFromRoomId(roomId) as Discord.TextChannel;
+        await this.JoinDiscordUsersInternal(roomId, channel);
+    }
+
+    async JoinDiscordUsersInternal(roomId: string, channel: Discord.TextChannel): Promise<void> {
+        for (const member of channel.members.array()) {
+            if (member.id === this.discord.GetBotId()) {
+                continue;
+            }
+            // Join a whole bunch of users.
+            // We delay the joins to give some implementations a chance to breathe
+            await Util.DelayedPromise(this.config.limits.roomGhostJoinDelay);
+            log.info(`UserSyncing ${member.id}`);
+            try {
+                // Ensure the profile is up to date.
+                await this.discord.UserSyncroniser.OnUpdateUser(member.user);
+            } catch (err) {
+                log.warn(`Failed to update profile of user ${member.id}`, err);
+            }
+            log.info(`Joining ${member.id} to ${roomId}`);
+
+            await this.joinRoom(this.discord.GetIntentFromDiscordMember(member), roomId, member);
+        }
+    }
+
     public async OnAliasQueried(alias: string, roomId: string): Promise<void> {
         log.verbose(`Got OnAliasQueried for ${alias} ${roomId}`);
         let channel: Discord.GuildChannel;
@@ -107,30 +133,7 @@ export class MatrixRoomHandler {
             log.warn("Failed to set room directory visibility for new room:", err);
         });
         await this.discord.ChannelSyncroniser.OnUpdate(channel);
-        const promiseList: Promise<void>[] = [];
-        // Join a whole bunch of users.
-        // We delay the joins to give some implementations a chance to breathe
-        let delay = this.config.limits.roomGhostJoinDelay;
-        for (const member of (channel as Discord.TextChannel).members.array()) {
-            if (member.id === this.discord.GetBotId()) {
-                continue;
-            }
-            promiseList.push((async (): Promise<void> => {
-                await Util.DelayedPromise(delay);
-                log.info(`UserSyncing ${member.id}`);
-                try {
-                    // Ensure the profile is up to date.
-                    await this.discord.UserSyncroniser.OnUpdateUser(member.user);
-                } catch (err) {
-                    log.warn(`Failed to update profile of user ${member.id}`, err);
-                }
-                log.info(`Joining ${member.id} to ${roomId}`);
-
-                await this.joinRoom(this.discord.GetIntentFromDiscordMember(member), roomId, member);
-            })());
-            delay += this.config.limits.roomGhostJoinDelay;
-        }
-        await Promise.all(promiseList);
+        await this.JoinDiscordUsersInternal(roomId, channel as Discord.TextChannel);
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
